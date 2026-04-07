@@ -2,7 +2,7 @@ import React, { useEffect, useState, useRef } from 'react';
 import type { Product } from '../../types/product';
 
 interface Props {
-  product: Product;
+  product: Product & { pageText?: string };
 }
 
 type AddState = 'idle' | 'loading' | 'added' | 'full';
@@ -53,6 +53,7 @@ export function FloatingAddWidget({ product }: Props) {
     if (addState === 'added' || addState === 'loading') return;
     setAddState('loading');
 
+    // Include pageText so the background can trigger LLM attribute extraction
     chrome.runtime.sendMessage({ type: 'ADD_PRODUCT', product }, (res) => {
       if (res?.success) {
         setAddState('added');

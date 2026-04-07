@@ -8,36 +8,28 @@ let compareBarMounted = false;
 
 function initForCurrentPage(): void {
   if (!isProductPage()) {
-    // Not a product page — remove any widget from a previous navigation
     removeAddToCompareButton();
     return;
   }
 
   const product = extractProductDirect();
   if (!product) {
-    // Product data couldn't be extracted — log and bail gracefully
     console.debug('[ProductCompare] Could not extract product from this page:', location.href);
     return;
   }
 
-  // Inject the floating widget (replaces itself if already present)
-  injectAddToCompareButton(product);
+  // Harvest page text now while the DOM is loaded, attach it to the product
+  // so the widget can include it when the user manually clicks "Add to Compare".
+  // The LLM extraction only runs AFTER the user explicitly adds the product.
+  const pageText = harvestPageTextForLLM();
+  const productWithPageText = { ...product, pageText };
 
-  // Mount the compare bar once per tab lifetime
+  // Inject the floating widget — no product is added yet, just the UI
+  injectAddToCompareButton(productWithPageText);
+
   if (!compareBarMounted) {
     mountCompareBar();
     compareBarMounted = true;
-  }
-
-  // Fire-and-forget: send page text to background for LLM attribute extraction
-  const pageText = harvestPageTextForLLM();
-  if (pageText) {
-    chrome.runtime.sendMessage({
-      type: 'ADD_PRODUCT',
-      product: { ...product, pageText } as typeof product & { pageText: string },
-    }).catch(() => {
-      // Background might not be ready yet — not fatal, user can still add manually
-    });
   }
 }
 
@@ -53,8 +45,5 @@ chrome.runtime.onMessage.addListener((msg: ExtensionMessage) => {
 
 // ── Bootstrap ─────────────────────────────────────────────────────────────────
 
-// Run immediately on page load
 initForCurrentPage();
-
-// Re-run when Amazon's SPA router navigates to a new product
 observePageChanges(initForCurrentPage);

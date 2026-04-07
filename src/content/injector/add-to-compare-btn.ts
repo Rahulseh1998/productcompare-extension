@@ -3,13 +3,15 @@ import React from 'react';
 import { FloatingAddWidget } from '../../components/FloatingAddWidget';
 import type { Product } from '../../types/product';
 
+type ProductWithPageText = Product & { pageText?: string };
+
 const HOST_ID = 'pc-add-widget-root';
 
 /**
  * Mount the floating "Compare" widget on the right edge of the page.
  * No Amazon DOM selectors needed — appended directly to body.
  */
-export function injectAddToCompareButton(product: Product): void {
+export function injectAddToCompareButton(product: ProductWithPageText): void {
   // Remove any existing widget (e.g. after SPA navigation to a new product)
   removeAddToCompareButton();
 
