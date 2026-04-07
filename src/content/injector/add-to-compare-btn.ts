@@ -1,43 +1,27 @@
 import { createRoot } from 'react-dom/client';
 import React from 'react';
-import { AddToCompareButton } from '../../components/AddToCompareButton';
+import { FloatingAddWidget } from '../../components/FloatingAddWidget';
 import type { Product } from '../../types/product';
-import { SELECTORS } from '../extractor/selectors';
 
-const HOST_ID = 'pc-add-btn-root';
+const HOST_ID = 'pc-add-widget-root';
 
-/** Find the best insertion point near the buy box or title */
-function findInsertionPoint(): Element | null {
-  // Try title block first — insert after it
-  for (const sel of [SELECTORS.TITLE_BLOCK, ...SELECTORS.BUY_BOX]) {
-    const el = document.querySelector(sel);
-    if (el) return el;
-  }
-  return null;
-}
+/**
+ * Mount the floating "Compare" widget on the right edge of the page.
+ * No Amazon DOM selectors needed — appended directly to body.
+ */
+export function injectAddToCompareButton(product: Product): void {
+  // Remove any existing widget (e.g. after SPA navigation to a new product)
+  removeAddToCompareButton();
 
-export async function injectAddToCompareButton(
-  product: Product & { pageText?: string }
-): Promise<void> {
-  if (document.getElementById(HOST_ID)) return;
-
-  const insertionEl = findInsertionPoint();
-  if (!insertionEl) return;
-
-  // Create Shadow DOM host for CSS isolation
   const host = document.createElement('div');
   host.id = HOST_ID;
 
-  const shadow = host.attachShadow({ mode: 'open' });
-  const mountPoint = document.createElement('div');
-  shadow.appendChild(mountPoint);
+  // Inline styles only — no Shadow DOM needed since we control everything via inline styles
+  // and the fixed positioning keeps us out of Amazon's layout flow
+  host.style.cssText = 'all: initial; position: fixed; top: 0; left: 0; width: 0; height: 0; z-index: 2147483646;';
 
-  // Insert after the target element
-  insertionEl.parentNode?.insertBefore(host, insertionEl.nextSibling);
-
-  createRoot(mountPoint).render(
-    React.createElement(AddToCompareButton, { product })
-  );
+  document.body.appendChild(host);
+  createRoot(host).render(React.createElement(FloatingAddWidget, { product }));
 }
 
 export function removeAddToCompareButton(): void {

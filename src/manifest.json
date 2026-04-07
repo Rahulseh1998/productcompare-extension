@@ -24,12 +24,12 @@
   "content_scripts": [
     {
       "matches": [
-        "https://*.amazon.com/dp/*",
-        "https://*.amazon.com/gp/product/*",
-        "https://*.amazon.co.uk/dp/*",
-        "https://*.amazon.co.uk/gp/product/*",
-        "https://*.amazon.de/dp/*",
-        "https://*.amazon.de/gp/product/*"
+        "https://*.amazon.com/*",
+        "https://*.amazon.co.uk/*",
+        "https://*.amazon.de/*",
+        "https://*.amazon.co.jp/*",
+        "https://*.amazon.ca/*",
+        "https://*.amazon.fr/*"
       ],
       "js": ["content/index.js"],
       "run_at": "document_idle"
