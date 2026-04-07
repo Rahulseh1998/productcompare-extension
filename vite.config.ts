@@ -4,20 +4,18 @@ import tailwindcss from '@tailwindcss/vite';
 import { viteStaticCopy } from 'vite-plugin-static-copy';
 import { resolve } from 'path';
 
-// Root is src/ so HTML entry paths are relative to src/ and
-// the dist output structure matches the manifest's file references exactly:
-//   dist/sidepanel/index.html  ← manifest "side_panel.default_path"
-//   dist/popup/index.html      ← manifest "action.default_popup"
-//   dist/background/index.js   ← manifest "background.service_worker"
-//   dist/content/index.js      ← manifest "content_scripts[].js"
-
+/**
+ * Main build: background service worker, side panel, popup.
+ * These run as ES modules (background has "type":"module" in manifest;
+ * sidepanel/popup load via <script type="module"> in their HTML files).
+ * Code splitting is fine here — they can import from chunks.
+ */
 export default defineConfig({
   root: resolve(__dirname, 'src'),
   plugins: [
     react(),
     tailwindcss(),
     viteStaticCopy({
-      // Paths relative to root (src/)
       targets: [
         { src: 'manifest.json', dest: '.' },
         { src: 'icons', dest: '.' },
@@ -30,20 +28,16 @@ export default defineConfig({
     emptyOutDir: true,
     rollupOptions: {
       input: {
-        // TS entries use absolute paths — unaffected by root
         background: resolve(__dirname, 'src/background/index.ts'),
-        content: resolve(__dirname, 'src/content/index.ts'),
-        // HTML entries are relative to root (src/) — outputs to dist/sidepanel/index.html
         sidepanel: resolve(__dirname, 'src/sidepanel/index.html'),
         popup: resolve(__dirname, 'src/popup/index.html'),
+        // Content script is built separately (see vite.content.config.ts)
+        // because content scripts cannot use ES module imports.
       },
       output: {
         entryFileNames: (chunk) => `${chunk.name}/index.js`,
         chunkFileNames: 'chunks/[name]-[hash].js',
-        assetFileNames: (asset) => {
-          if (asset.name?.endsWith('.css')) return 'content/content.css';
-          return 'assets/[name][extname]';
-        },
+        assetFileNames: 'assets/[name][extname]',
       },
     },
     modulePreload: { polyfill: false },
