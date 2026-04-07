@@ -1,6 +1,44 @@
 import React, { useEffect, useState } from 'react';
 import type { Product } from '../../types/product';
 
+/**
+ * Cross-category detection: soft warning approach (v1).
+ *
+ * We detect likely category mismatch by comparing the broad product category
+ * inferred from the page URL or product title keywords. When mixed, we show
+ * a warning badge in the bar — but never block the user from comparing.
+ *
+ * Future option (v2 — category-scoped sessions):
+ *   When adding a product from a clearly different category (e.g. Electronics → Kitchen),
+ *   prompt: "You're now viewing a Kitchen product. Start a new comparison or continue?"
+ *   Implementation: read category from Amazon breadcrumbs (#wayfinding-breadcrumbs_feature_div),
+ *   store the first product's category in chrome.storage.session, compare on each ADD_PRODUCT.
+ *   Block route: return { success: false, reason: 'category_mismatch', currentCategory, newCategory }
+ *   from the background ADD_PRODUCT handler and show a confirmation dialog in the widget.
+ */
+
+/** Rough category bucket from product URL/title — good enough for soft warning */
+function inferCategoryBucket(product: Product): string {
+  const breadcrumb = document.querySelector('#wayfinding-breadcrumbs_feature_div')?.textContent ?? '';
+  const text = (breadcrumb + ' ' + product.title).toLowerCase();
+
+  if (/laptop|computer|monitor|keyboard|mouse|tablet|ipad|macbook|chromebook/.test(text)) return 'electronics-computing';
+  if (/headphone|speaker|earbu|airpod|audio|sound/.test(text)) return 'electronics-audio';
+  if (/phone|smartphone|iphone|android|charger|cable/.test(text)) return 'electronics-mobile';
+  if (/kitchen|cookware|pot|pan|kettle|teapot|blender|toaster|coffee/.test(text)) return 'kitchen';
+  if (/clothing|shirt|pants|dress|shoe|jacket|underwear/.test(text)) return 'clothing';
+  if (/book|novel|textbook|kindle/.test(text)) return 'books';
+  if (/supplement|vitamin|protein|fitness|gym/.test(text)) return 'health';
+  if (/toy|game|puzzle|lego/.test(text)) return 'toys';
+  return 'other';
+}
+
+function hasMixedCategories(products: Product[]): boolean {
+  if (products.length < 2) return false;
+  const buckets = products.map(inferCategoryBucket);
+  return new Set(buckets).size > 1;
+}
+
 const BAR_STYLES: React.CSSProperties = {
   position: 'fixed',
   bottom: 0,
@@ -89,6 +127,13 @@ export function FloatingCompareBar() {
           <ProductChip key={p.asin} product={p} onRemove={handleRemove} />
         ))}
       </div>
+
+      {/* Mixed-category soft warning */}
+      {hasMixedCategories(products) && (
+        <span title="Products appear to be from different categories. The comparison will still work, but some attributes may not align." style={{ fontSize: '11px', color: '#92400e', background: '#fef3c7', padding: '2px 8px', borderRadius: 4, whiteSpace: 'nowrap', cursor: 'default' }}>
+          ⚠ Mixed categories
+        </span>
+      )}
 
       {/* Count badge */}
       <span style={{ fontSize: '12px', color: '#666', whiteSpace: 'nowrap' }}>

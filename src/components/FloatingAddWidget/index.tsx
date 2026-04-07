@@ -53,8 +53,10 @@ export function FloatingAddWidget({ product }: Props) {
     if (addState === 'added' || addState === 'loading') return;
     setAddState('loading');
 
-    // Include pageText so the background can trigger LLM attribute extraction
-    chrome.runtime.sendMessage({ type: 'ADD_PRODUCT', product }, (res) => {
+    // Send pageText as a top-level field (not inside product) so background
+    // can pass it to LLM enrichment without polluting the Product type
+    const { pageText, ...cleanProduct } = product;
+    chrome.runtime.sendMessage({ type: 'ADD_PRODUCT', product: cleanProduct, pageText }, (res) => {
       if (res?.success) {
         setAddState('added');
       } else if (res?.reason === 'limit_reached') {

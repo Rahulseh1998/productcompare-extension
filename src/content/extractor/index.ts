@@ -3,16 +3,15 @@ import { SELECTORS } from './selectors';
 import { extractAsin } from './asin-extractor';
 import { extractPrice } from './price-extractor';
 import { harvestSections, buildPageText } from './section-harvester';
+import { extractStructuredSpecs } from './specs-extractor';
 
 export function isProductPage(): boolean {
   return /\/dp\/|\/gp\/product\//.test(location.pathname);
 }
 
-/** Extract all fields that don't require LLM (fast path) */
 function extractDirectFields() {
   const { price, currency, priceFormatted } = extractPrice();
 
-  // Rating
   let rating: number | null = null;
   for (const sel of SELECTORS.RATING) {
     const text = document.querySelector(sel)?.textContent;
@@ -22,7 +21,6 @@ function extractDirectFields() {
     }
   }
 
-  // Review count
   let reviewCount: number | null = null;
   for (const sel of SELECTORS.REVIEW_COUNT) {
     const text = document.querySelector(sel)?.textContent;
@@ -32,14 +30,12 @@ function extractDirectFields() {
     }
   }
 
-  // Main image
   let imageUrl = '';
   for (const sel of SELECTORS.MAIN_IMAGE) {
     const src = document.querySelector<HTMLImageElement>(sel)?.src;
     if (src) { imageUrl = src; break; }
   }
 
-  // Brand
   let brand: string | null = null;
   for (const sel of SELECTORS.BRAND) {
     const text = document.querySelector(sel)?.textContent?.trim();
@@ -49,7 +45,6 @@ function extractDirectFields() {
     }
   }
 
-  // Title
   let title = '';
   for (const sel of SELECTORS.TITLE) {
     const text = document.querySelector(sel)?.textContent?.trim();
@@ -65,9 +60,18 @@ function extractDirectFields() {
 /**
  * Extract a Product from the current Amazon product page.
  *
- * Returns a partial product immediately (direct fields only).
- * The LLM attribute extraction happens asynchronously via the background service worker.
- * Call sendExtractionToBackground() to trigger it.
+ * Attribute population has two tiers:
+ *
+ * Tier 1 — Structured spec parsing (always runs, instant, no API needed):
+ *   Parses Amazon's spec tables and detail bullets directly as key:value pairs.
+ *   Gives 5-15 attributes per product (weight, dimensions, battery, RAM, etc.)
+ *   depending on how much structured data Amazon shows for that category.
+ *
+ * Tier 2 — LLM enrichment via Claude Haiku (runs when API key is set):
+ *   Sends harvested page text to background → Claude extracts up to 20 attributes
+ *   from prose bullet points that don't appear in structured tables.
+ *   Results are cached by ASIN for 24 hours.
+ *   If no API key is configured, Tier 1 attributes are shown as-is.
  */
 export function extractProductDirect(): Product | null {
   const asin = extractAsin();
@@ -75,6 +79,9 @@ export function extractProductDirect(): Product | null {
 
   const direct = extractDirectFields();
   if (!direct.title) return null;
+
+  // Tier 1: parse structured specs immediately — no LLM, no latency
+  const structuredAttributes = extractStructuredSpecs();
 
   return {
     asin,
@@ -89,7 +96,8 @@ export function extractProductDirect(): Product | null {
     productUrl: location.href,
     isPrime: direct.isPrime,
     availability: direct.availability,
-    attributes: [],
+    attributes: structuredAttributes,
+    // attributesPartial stays true until LLM enrichment completes (if API key present)
     attributesPartial: true,
     extractedAt: Date.now(),
     pageLocale: document.documentElement.lang ?? 'en-US',
@@ -97,8 +105,9 @@ export function extractProductDirect(): Product | null {
 }
 
 /**
- * Harvest page text for LLM attribute extraction.
- * Returns the structured text string to send to the background worker.
+ * Harvest page text for LLM attribute enrichment (Tier 2).
+ * Only called when user adds a product — text is sent to background
+ * which calls Claude Haiku if an API key is configured.
  */
 export function harvestPageTextForLLM(): string {
   const sections = harvestSections();

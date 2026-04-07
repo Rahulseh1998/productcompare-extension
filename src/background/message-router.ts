@@ -33,8 +33,9 @@ export async function routeMessage(
       const updated = [...current, msg.product];
       await setActiveProducts(updated);
 
-      // Trigger LLM attribute extraction asynchronously (non-blocking)
-      triggerLLMExtraction(msg.product.asin, msg.product.pageText ?? '').catch(console.error);
+      // Trigger LLM enrichment asynchronously — reads pageText from the message,
+      // not from product (keeps Product type clean). No-ops if no API key configured.
+      triggerLLMExtraction(msg.product.asin, msg.pageText ?? '').catch(console.error);
 
       await broadcastToAllTabs({ type: 'COMPARE_LIST_UPDATED', products: updated });
       sendResponse({ success: true });
@@ -130,11 +131,21 @@ async function triggerLLMExtraction(asin: string, pageText: string): Promise<voi
   await updateProductAttributes(asin, attributes);
 }
 
-async function updateProductAttributes(asin: string, attributes: import('../types/product').ProductAttribute[]): Promise<void> {
+async function updateProductAttributes(asin: string, llmAttributes: import('../types/product').ProductAttribute[]): Promise<void> {
   const products = await getActiveProducts();
-  const updated = products.map((p) =>
-    p.asin === asin ? { ...p, attributes, attributesPartial: false } : p
-  );
+  const updated = products.map((p) => {
+    if (p.asin !== asin) return p;
+
+    // Merge: structured specs (already on product) + LLM enrichment.
+    // LLM wins on duplicate keys (it has more context for prose-based specs).
+    const existingKeys = new Set(llmAttributes.map((a) => a.key));
+    const merged = [
+      ...llmAttributes,
+      ...p.attributes.filter((a) => !existingKeys.has(a.key)),
+    ];
+
+    return { ...p, attributes: merged, attributesPartial: false };
+  });
   await setActiveProducts(updated);
   await broadcastToAllTabs({ type: 'COMPARE_LIST_UPDATED', products: updated });
 }

@@ -28,6 +28,8 @@ interface BaseMessage {
 export interface AddProductMessage extends BaseMessage {
   type: 'ADD_PRODUCT';
   product: Product;
+  /** Raw page text for LLM enrichment — present only when sent from content script */
+  pageText?: string;
 }
 
 export interface RemoveProductMessage extends BaseMessage {
