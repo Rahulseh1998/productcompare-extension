@@ -17,6 +17,7 @@ export async function routeMessage(
 ): Promise<void> {
   switch (msg.type) {
     case 'ADD_PRODUCT': {
+      console.log(`[PC] ADD_PRODUCT received — ASIN: ${msg.product.asin}, pageText: ${msg.pageText?.length ?? 0} chars, title: "${msg.product.title.slice(0, 50)}..."`);
       const license = await getLicenseStatus();
       const maxProducts = getMaxProducts(license.plan);
       const current = await getActiveProducts();
@@ -114,21 +115,33 @@ export async function routeMessage(
 
 /** Fire-and-forget: extract attributes via LLM, update products in storage */
 async function triggerLLMExtraction(asin: string, pageText: string): Promise<void> {
-  if (!pageText) return;
+  if (!pageText) {
+    console.debug(`[PC] LLM extraction skipped for ${asin}: no page text`);
+    return;
+  }
 
-  // Check cache first
   const cached = await getCachedAttributes(asin);
   if (cached) {
+    console.debug(`[PC] Cache hit for ${asin}: ${cached.length} attributes, skipping LLM call`);
     await updateProductAttributes(asin, cached);
     return;
   }
 
   const settings = await getSettings();
-  if (!settings.anthropicApiKey) return;
+  if (!settings.anthropicApiKey) {
+    console.debug(`[PC] LLM extraction skipped for ${asin}: no Anthropic API key configured`);
+    return;
+  }
 
-  const attributes = await extractAttributesWithLLM(pageText, settings.anthropicApiKey);
-  await setCachedAttributes(asin, attributes);
-  await updateProductAttributes(asin, attributes);
+  console.log(`[PC] Calling Claude Haiku for ${asin} — page text: ${pageText.length} chars`);
+  try {
+    const attributes = await extractAttributesWithLLM(pageText, settings.anthropicApiKey);
+    console.log(`[PC] LLM extraction complete for ${asin}: ${attributes.length} attributes extracted`, attributes);
+    await setCachedAttributes(asin, attributes);
+    await updateProductAttributes(asin, attributes);
+  } catch (err) {
+    console.error(`[PC] LLM extraction failed for ${asin}:`, err);
+  }
 }
 
 async function updateProductAttributes(asin: string, llmAttributes: import('../types/product').ProductAttribute[]): Promise<void> {
