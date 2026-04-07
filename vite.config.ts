@@ -4,30 +4,40 @@ import tailwindcss from '@tailwindcss/vite';
 import { viteStaticCopy } from 'vite-plugin-static-copy';
 import { resolve } from 'path';
 
+// Root is src/ so HTML entry paths are relative to src/ and
+// the dist output structure matches the manifest's file references exactly:
+//   dist/sidepanel/index.html  ← manifest "side_panel.default_path"
+//   dist/popup/index.html      ← manifest "action.default_popup"
+//   dist/background/index.js   ← manifest "background.service_worker"
+//   dist/content/index.js      ← manifest "content_scripts[].js"
+
 export default defineConfig({
+  root: resolve(__dirname, 'src'),
   plugins: [
     react(),
     tailwindcss(),
     viteStaticCopy({
+      // Paths relative to root (src/)
       targets: [
-        { src: 'src/manifest.json', dest: '.' },
-        { src: 'src/icons', dest: '.' },
+        { src: 'manifest.json', dest: '.' },
+        { src: 'icons', dest: '.' },
       ],
     }),
   ],
   build: {
     target: 'chrome114',
-    outDir: 'dist',
+    outDir: resolve(__dirname, 'dist'),
     emptyOutDir: true,
     rollupOptions: {
       input: {
+        // TS entries use absolute paths — unaffected by root
         background: resolve(__dirname, 'src/background/index.ts'),
         content: resolve(__dirname, 'src/content/index.ts'),
+        // HTML entries are relative to root (src/) — outputs to dist/sidepanel/index.html
         sidepanel: resolve(__dirname, 'src/sidepanel/index.html'),
         popup: resolve(__dirname, 'src/popup/index.html'),
       },
       output: {
-        // Fixed filenames — manifest.json references these directly
         entryFileNames: (chunk) => `${chunk.name}/index.js`,
         chunkFileNames: 'chunks/[name]-[hash].js',
         assetFileNames: (asset) => {
@@ -36,7 +46,6 @@ export default defineConfig({
         },
       },
     },
-    // Content scripts cannot use dynamic import (MV3 restriction)
     modulePreload: { polyfill: false },
   },
   resolve: {

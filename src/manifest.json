@@ -32,7 +32,6 @@
         "https://*.amazon.de/gp/product/*"
       ],
       "js": ["content/index.js"],
-      "css": ["content/content.css"],
       "run_at": "document_idle"
     }
   ],
@@ -56,7 +55,7 @@
   },
   "web_accessible_resources": [
     {
-      "resources": ["content/content.css", "fonts/*"],
+      "resources": ["fonts/*"],
       "matches": [
         "https://*.amazon.com/*",
         "https://*.amazon.co.uk/*",
