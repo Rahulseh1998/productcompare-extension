@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import type { Product } from '../types/product';
+import { getReferralCode, getReferralUrl } from '../utils/referral';
 
 type View = 'main' | 'settings';
 
@@ -10,6 +11,10 @@ function Popup() {
   const [view, setView] = useState<View>('main');
   const [apiKey, setApiKey] = useState('');
   const [apiKeySaved, setApiKeySaved] = useState(false);
+  const [licenseKey, setLicenseKey] = useState('');
+  const [licenseEmail, setLicenseEmail] = useState('');
+  const [licenseStatus, setLicenseStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
+  const [licenseError, setLicenseError] = useState('');
 
   useEffect(() => {
     chrome.runtime.sendMessage({ type: 'GET_COMPARE_LIST' }, (res) => {
@@ -30,6 +35,23 @@ function Popup() {
       chrome.sidePanel.open({ tabId: tab.id });
       window.close();
     }
+  };
+
+  const activateLicense = () => {
+    if (!licenseKey.trim() || !licenseEmail.trim()) return;
+    setLicenseStatus('loading');
+    chrome.runtime.sendMessage(
+      { type: 'ACTIVATE_LICENSE', licenseKey: licenseKey.trim(), email: licenseEmail.trim() },
+      (res) => {
+        if (res?.success) {
+          setLicenseStatus('success');
+          setPlan('pro');
+        } else {
+          setLicenseStatus('error');
+          setLicenseError(res?.error ?? 'Activation failed');
+        }
+      }
+    );
   };
 
   const saveApiKey = () => {
@@ -74,6 +96,63 @@ function Popup() {
             Your key is stored locally on your device and never sent to our servers. It's used only to call Anthropic's API directly from your browser.
           </p>
         </div>
+
+        {/* License Activation */}
+        <div style={{ borderTop: '1px solid #e5e7eb', paddingTop: 16 }}>
+          <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: '#374151', marginBottom: 6 }}>
+            Pro License
+          </label>
+          {plan === 'pro' ? (
+            <div style={{ fontSize: 12, color: '#065f46', background: '#d1fae5', borderRadius: 6, padding: '8px 10px', fontWeight: 600 }}>
+              &#10003; Pro plan active
+            </div>
+          ) : (
+            <>
+              <p style={{ fontSize: 11, color: '#6b7280', marginBottom: 8, lineHeight: 1.4 }}>
+                Unlock AI Verdict, price history, 5-product comparisons, and export features.
+              </p>
+              <input
+                type="email"
+                value={licenseEmail}
+                onChange={(e) => setLicenseEmail(e.target.value)}
+                placeholder="you@email.com"
+                style={{ width: '100%', padding: '8px 10px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 12, boxSizing: 'border-box', marginBottom: 6 }}
+              />
+              <input
+                type="text"
+                value={licenseKey}
+                onChange={(e) => setLicenseKey(e.target.value)}
+                placeholder="PRO-xxxx-xxxx"
+                style={{ width: '100%', padding: '8px 10px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 12, boxSizing: 'border-box', fontFamily: 'monospace' }}
+              />
+              <button
+                onClick={activateLicense}
+                disabled={licenseStatus === 'loading' || !licenseKey.trim() || !licenseEmail.trim()}
+                style={{
+                  marginTop: 8, width: '100%', padding: '8px 0',
+                  background: licenseStatus === 'success' ? '#067D62' : '#7c3aed',
+                  color: '#fff', border: 'none', borderRadius: 6, fontWeight: 700, fontSize: 13,
+                  cursor: licenseStatus === 'loading' ? 'wait' : 'pointer',
+                  opacity: (!licenseKey.trim() || !licenseEmail.trim()) ? 0.5 : 1,
+                  transition: 'background 0.2s',
+                }}
+              >
+                {licenseStatus === 'loading' ? 'Activating...' : licenseStatus === 'success' ? '&#10003; Activated!' : 'Activate License'}
+              </button>
+              {licenseStatus === 'error' && (
+                <p style={{ fontSize: 11, color: '#dc2626', marginTop: 6 }}>{licenseError}</p>
+              )}
+              <a
+                href="http://localhost:3000/pro"
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{ display: 'block', textAlign: 'center', fontSize: 11, color: '#7c3aed', marginTop: 8, textDecoration: 'none' }}
+              >
+                Don't have a key? Get Pro →
+              </a>
+            </>
+          )}
+        </div>
       </div>
     );
   }
@@ -82,8 +161,8 @@ function Popup() {
     <div style={{ padding: '16px', width: 320 }}>
       {/* Header */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
-        <span style={{ fontSize: 20 }}>⚖️</span>
-        <span style={{ fontWeight: 700, fontSize: 15 }}>ProductCompare</span>
+        <span style={{ fontSize: 20 }}>🛒</span>
+        <span style={{ fontWeight: 700, fontSize: 15 }}>CompareCart</span>
         <span style={{ marginLeft: 'auto', fontSize: 10, background: plan === 'pro' ? '#d1fae5' : '#fef3c7', color: plan === 'pro' ? '#065f46' : '#92400e', padding: '2px 8px', borderRadius: 10, fontWeight: 600 }}>
           {plan.toUpperCase()}
         </span>
@@ -114,11 +193,75 @@ function Popup() {
       </button>
 
       {plan === 'free' && (
-        <a href="https://productcompare.app/pro" target="_blank" rel="noopener noreferrer"
-          style={{ display: 'block', textAlign: 'center', fontSize: 11, color: '#7c3aed', textDecoration: 'none', padding: '6px', background: '#f5f3ff', borderRadius: 6 }}>
+        <a href="http://localhost:3000/pro" target="_blank" rel="noopener noreferrer"
+          style={{ display: 'block', textAlign: 'center', fontSize: 11, color: '#7c3aed', textDecoration: 'none', padding: '6px', background: '#f5f3ff', borderRadius: 6, marginBottom: 10 }}>
           ✨ Upgrade to Pro — AI verdict + price history + 5 products
         </a>
       )}
+
+      {/* Referral */}
+      <ReferralSection />
+
+      {/* Feedback links */}
+      <div style={{ borderTop: '1px solid #f3f4f6', marginTop: 10, paddingTop: 8, display: 'flex', justifyContent: 'center', gap: 12 }}>
+        <a href="https://github.com/Rahulseh1998/productcompare-extension/issues/new?labels=bug&title=Bug:" target="_blank" rel="noopener noreferrer"
+          style={{ fontSize: 10, color: '#9ca3af', textDecoration: 'none' }}>
+          Report a Bug
+        </a>
+        <span style={{ fontSize: 10, color: '#e5e7eb' }}>|</span>
+        <a href="https://github.com/Rahulseh1998/productcompare-extension/issues/new?labels=feature&title=Feature:" target="_blank" rel="noopener noreferrer"
+          style={{ fontSize: 10, color: '#9ca3af', textDecoration: 'none' }}>
+          Request a Feature
+        </a>
+      </div>
+    </div>
+  );
+}
+
+function ReferralSection() {
+  const [referralUrl, setReferralUrl] = useState('');
+  const [copied, setCopied] = useState(false);
+
+  useEffect(() => {
+    getReferralCode().then((code) => setReferralUrl(getReferralUrl(code)));
+  }, []);
+
+  const copy = async () => {
+    await navigator.clipboard.writeText(referralUrl);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  if (!referralUrl) return null;
+
+  return (
+    <div style={{ borderTop: '1px solid #e5e7eb', paddingTop: 10 }}>
+      <p style={{ fontSize: 11, fontWeight: 600, color: '#374151', marginBottom: 4 }}>
+        Invite friends, get Pro free
+      </p>
+      <p style={{ fontSize: 10, color: '#6b7280', marginBottom: 6, lineHeight: 1.4 }}>
+        Share your link. For every 2 friends who install, you get 1 month of Pro.
+      </p>
+      <div style={{ display: 'flex', gap: 6 }}>
+        <input
+          readOnly
+          value={referralUrl}
+          style={{ flex: 1, padding: '6px 8px', fontSize: 10, border: '1px solid #d1d5db', borderRadius: 6, background: '#f9fafb', fontFamily: 'monospace', color: '#374151' }}
+          onClick={(e) => (e.target as HTMLInputElement).select()}
+        />
+        <button
+          onClick={copy}
+          style={{
+            padding: '6px 12px', fontSize: 10, fontWeight: 700,
+            background: copied ? '#d1fae5' : '#e47911',
+            color: copied ? '#065f46' : '#fff',
+            border: 'none', borderRadius: 6, cursor: 'pointer',
+            transition: 'all 0.2s', whiteSpace: 'nowrap',
+          }}
+        >
+          {copied ? '✓' : 'Copy'}
+        </button>
+      </div>
     </div>
   );
 }

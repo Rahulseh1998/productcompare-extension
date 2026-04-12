@@ -9,6 +9,9 @@ import { getLicenseStatus, getMaxProducts, validateAndActivate } from './license
 import { getCachedAttributes, setCachedAttributes } from './extraction-cache';
 import { extractAttributesWithLLM } from './claude-extractor';
 import { generateVerdict } from './claude-verdict';
+import { getLocalAIStatus, isLocalAIUsable, extractWithLocalAI, generateVerdictWithLocalAI } from './local-ai';
+import { fetchPriceHistory } from './price-history';
+import { deduplicateAttributes } from '../utils/normalize-keys';
 
 export async function routeMessage(
   msg: ExtensionMessage,
@@ -17,7 +20,7 @@ export async function routeMessage(
 ): Promise<void> {
   switch (msg.type) {
     case 'ADD_PRODUCT': {
-      console.log(`[PC] ADD_PRODUCT received — ASIN: ${msg.product.asin}, pageText: ${msg.pageText?.length ?? 0} chars, title: "${msg.product.title.slice(0, 50)}..."`);
+      console.log(`[CC] ADD_PRODUCT — ASIN: ${msg.product.asin}, pageText: ${msg.pageText?.length ?? 0} chars`);
       const license = await getLicenseStatus();
       const maxProducts = getMaxProducts(license.plan);
       const current = await getActiveProducts();
@@ -39,6 +42,14 @@ export async function routeMessage(
       triggerLLMExtraction(msg.product.asin, msg.pageText ?? '').catch(console.error);
 
       await broadcastToAllTabs({ type: 'COMPARE_LIST_UPDATED', products: updated });
+
+      // Track comparison count for review prompt
+      if (updated.length >= 2) {
+        const countResult = await chrome.storage.local.get('stats.compareCount');
+        const count = (countResult['stats.compareCount'] ?? 0) + 1;
+        await chrome.storage.local.set({ 'stats.compareCount': count });
+      }
+
       sendResponse({ success: true });
       break;
     }
@@ -74,22 +85,39 @@ export async function routeMessage(
     }
 
     case 'FETCH_VERDICT': {
-      const settings = await getSettings();
-      if (!settings.anthropicApiKey) {
-        sendResponse({ error: 'No API key configured' });
-        return;
-      }
       try {
-        const verdict = await generateVerdict(msg.products, settings.anthropicApiKey);
-        // Broadcast verdict to side panel
-        if (sender.tab?.id) {
-          chrome.tabs.sendMessage(sender.tab.id, {
-            type: 'VERDICT_COMPLETE',
-            verdict,
-            requestId: msg.requestId,
-          });
+        // Tier 1: Try Chrome Built-in AI (free, local)
+        const aiStatus = await getLocalAIStatus();
+        if (isLocalAIUsable(aiStatus)) {
+          console.log('[CC] Generating verdict with Chrome Built-in AI (Gemini Nano)');
+          const verdict = await generateVerdictWithLocalAI(msg.products);
+          sendResponse({ verdict });
+          return;
         }
-        sendResponse({ success: true });
+
+        // Tier 2: Try user's Anthropic API key
+        const settings = await getSettings();
+        if (settings.anthropicApiKey) {
+          console.log('[CC] Generating verdict with Anthropic API');
+          const verdict = await generateVerdict(msg.products, settings.anthropicApiKey);
+          sendResponse({ verdict });
+          return;
+        }
+
+        sendResponse({ error: 'AI not available. Chrome Built-in AI requires Chrome 131+ with sufficient hardware, or add an API key in Settings.' });
+      } catch (err) {
+        sendResponse({ error: String(err) });
+      }
+      break;
+    }
+
+    case 'FETCH_PRICE_HISTORY': {
+      try {
+        const products = await getActiveProducts();
+        const product = products.find((p) => p.asin === msg.asin);
+        const settings = await getSettings();
+        const points = await fetchPriceHistory(msg.asin, product?.price ?? null, settings.keepaApiKey);
+        sendResponse({ asin: msg.asin, points });
       } catch (err) {
         sendResponse({ error: String(err) });
       }
@@ -122,25 +150,43 @@ async function triggerLLMExtraction(asin: string, pageText: string): Promise<voi
 
   const cached = await getCachedAttributes(asin);
   if (cached) {
-    console.debug(`[PC] Cache hit for ${asin}: ${cached.length} attributes, skipping LLM call`);
+    console.debug(`[CC] Cache hit for ${asin}: ${cached.length} attributes`);
     await updateProductAttributes(asin, cached);
     return;
   }
 
+  // Tier 1: Try Chrome Built-in AI (free, local, no setup)
+  const aiStatus = await getLocalAIStatus();
+  if (isLocalAIUsable(aiStatus)) {
+    console.log(`[CC] Extracting with Chrome Built-in AI for ${asin}`);
+    try {
+      const attributes = await extractWithLocalAI(pageText);
+      if (attributes.length > 0) {
+        console.log(`[CC] Local AI extraction complete for ${asin}: ${attributes.length} attributes`);
+        await setCachedAttributes(asin, attributes);
+        await updateProductAttributes(asin, attributes);
+        return;
+      }
+    } catch (err) {
+      console.debug(`[CC] Local AI extraction failed for ${asin}, trying fallback:`, err);
+    }
+  }
+
+  // Tier 2: Try user's Anthropic API key
   const settings = await getSettings();
   if (!settings.anthropicApiKey) {
-    console.debug(`[PC] LLM extraction skipped for ${asin}: no Anthropic API key configured`);
+    console.debug(`[CC] No AI available for ${asin}: Chrome AI unavailable, no API key`);
     return;
   }
 
-  console.log(`[PC] Calling Claude Haiku for ${asin} — page text: ${pageText.length} chars`);
+  console.log(`[CC] Extracting with Anthropic API for ${asin}`);
   try {
     const attributes = await extractAttributesWithLLM(pageText, settings.anthropicApiKey);
-    console.log(`[PC] LLM extraction complete for ${asin}: ${attributes.length} attributes extracted`, attributes);
+    console.log(`[CC] Anthropic extraction complete for ${asin}: ${attributes.length} attributes`);
     await setCachedAttributes(asin, attributes);
     await updateProductAttributes(asin, attributes);
   } catch (err) {
-    console.error(`[PC] LLM extraction failed for ${asin}:`, err);
+    console.error(`[CC] Anthropic extraction failed for ${asin}:`, err);
   }
 }
 
@@ -151,11 +197,14 @@ async function updateProductAttributes(asin: string, llmAttributes: import('../t
 
     // Merge: structured specs (already on product) + LLM enrichment.
     // LLM wins on duplicate keys (it has more context for prose-based specs).
+    // Then deduplicate by normalized key to collapse near-duplicates like
+    // "dishwasher_safe" vs "is_dishwasher_safe".
     const existingKeys = new Set(llmAttributes.map((a) => a.key));
-    const merged = [
+    const raw = [
       ...llmAttributes,
       ...p.attributes.filter((a) => !existingKeys.has(a.key)),
     ];
+    const merged = deduplicateAttributes(raw);
 
     return { ...p, attributes: merged, attributesPartial: false };
   });

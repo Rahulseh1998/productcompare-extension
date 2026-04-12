@@ -1,5 +1,6 @@
 import type { ExtensionMessage } from '../types/messages';
 import { routeMessage } from './message-router';
+import { getLicense, setLicense } from './storage';
 
 function isAmazonUrl(url?: string): boolean {
   if (!url) return false;
@@ -49,3 +50,22 @@ async function fetchSelectorOverrides(): Promise<void> {
 }
 
 fetchSelectorOverrides();
+
+// ── 7-day Pro trial for new installs ────────────────────────────────────────
+
+chrome.runtime.onInstalled.addListener(async (details) => {
+  if (details.reason === 'install') {
+    const license = await getLicense();
+    // Only set trial if user doesn't already have a license
+    if (license.plan === 'free' && !license.licenseKey) {
+      await setLicense({
+        plan: 'pro',
+        licenseKey: null,
+        email: null,
+        activatedAt: Date.now(),
+        expiresAt: Date.now() + 7 * 24 * 60 * 60 * 1000, // 7 days
+      });
+      console.log('[CC] 7-day Pro trial activated for new install');
+    }
+  }
+});

@@ -1,8 +1,10 @@
 {
   "manifest_version": 3,
-  "name": "ProductCompare for Amazon",
+  "name": "CompareCart for Amazon",
+  "short_name": "CompareCart",
   "version": "1.0.0",
-  "description": "Compare Amazon products side-by-side with AI-powered insights and price history.",
+  "minimum_chrome_version": "138",
+  "description": "Compare Amazon products side-by-side. AI-powered attribute extraction, price history, and smart verdicts — no setup required.",
   "permissions": [
     "storage",
     "sidePanel",
@@ -15,7 +17,8 @@
     "https://*.amazon.de/*",
     "https://*.amazon.co.jp/*",
     "https://*.amazon.ca/*",
-    "https://*.amazon.fr/*"
+    "https://*.amazon.fr/*",
+    "https://api.anthropic.com/*"
   ],
   "background": {
     "service_worker": "background/index.js",

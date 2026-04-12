@@ -35,6 +35,7 @@ export async function extractAttributesWithLLM(
       'x-api-key': apiKey,
       'anthropic-version': '2023-06-01',
       'content-type': 'application/json',
+      'anthropic-dangerous-direct-browser-access': 'true',
     },
     body: JSON.stringify({
       model: 'claude-haiku-4-5',
@@ -49,7 +50,8 @@ export async function extractAttributesWithLLM(
   });
 
   if (!response.ok) {
-    throw new Error(`Anthropic API error: ${response.status}`);
+    const errBody = await response.text();
+    throw new Error(`Anthropic API error: ${response.status} — ${errBody}`);
   }
 
   const data = await response.json();

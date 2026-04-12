@@ -1,18 +1,24 @@
 import type { Product } from '../types/product';
 import type { ComparedRow, ComparedCell, AttributeDiff } from '../types/comparison';
+import { normalizeKey, deduplicateAttributes } from './normalize-keys';
 
 const LOWER_IS_BETTER = new Set(['price']);
-const HIGHER_IS_BETTER = new Set(['rating', 'review_count', 'reviewcount', 'reviews']);
+const HIGHER_IS_BETTER = new Set(['rating', 'reviewcount', 'review']);
 
-function assignNumericDiff(cells: ComparedCell[], key: string): void {
+/** Cross-product: drop child rows when a composite parent row exists */
+const SUBSUMES: Record<string, string[]> = {
+  dimension: ['depth', 'width', 'height'],
+};
+
+function assignNumericDiff(cells: ComparedCell[], normalizedKey: string): void {
   const numeric = cells
     .map((c) => ({ asin: c.productAsin, val: Number(c.value) }))
     .filter((c) => !isNaN(c.val) && c.val !== null);
 
   if (numeric.length < 2) return;
 
-  const lowerIsBetter = LOWER_IS_BETTER.has(key.toLowerCase());
-  const higherIsBetter = HIGHER_IS_BETTER.has(key.toLowerCase());
+  const lowerIsBetter = LOWER_IS_BETTER.has(normalizedKey);
+  const higherIsBetter = HIGHER_IS_BETTER.has(normalizedKey);
 
   if (!lowerIsBetter && !higherIsBetter) return;
 
@@ -32,30 +38,66 @@ function assignNumericDiff(cells: ComparedCell[], key: string): void {
 export function computeDiff(products: Product[]): ComparedRow[] {
   if (products.length < 2) return [];
 
-  // Always include core fields first
-  const coreKeys = ['price', 'rating', 'reviewCount', 'isPrime', 'availability', 'brand'];
+  // Deduplicate attributes within each product first
+  const cleanProducts = products.map((p) => ({
+    ...p,
+    attributes: deduplicateAttributes(p.attributes),
+  }));
 
-  // Collect all unique attribute keys from LLM-extracted attributes
-  const attrKeys = [
-    ...new Set(products.flatMap((p) => p.attributes.map((a) => a.key))),
+  // Core fields — always shown first
+  const coreKeys = ['price', 'rating', 'reviewCount', 'isPrime', 'availability', 'brand'];
+  const normalizedCoreKeys = new Set(coreKeys.map(normalizeKey));
+
+  // Build a map: normalizedKey → { bestLabel }
+  // Groups "microphones"/"microphone", "voice_assistant_compatible"/"voice_assistant" into same row
+  const keyGroups = new Map<string, { label: string }>();
+
+  for (const p of cleanProducts) {
+    for (const attr of p.attributes) {
+      const nk = normalizeKey(attr.key);
+      if (normalizedCoreKeys.has(nk)) continue;
+
+      const group = keyGroups.get(nk);
+      if (group) {
+        if (attr.label.length > group.label.length) {
+          group.label = attr.label;
+        }
+      } else {
+        keyGroups.set(nk, { label: attr.label });
+      }
+    }
+  }
+
+  // Remove sub-keys when composite parent exists (e.g. depth/width/height when dimensions exists)
+  const allNormalized = new Set(keyGroups.keys());
+  for (const [parent, children] of Object.entries(SUBSUMES)) {
+    if (allNormalized.has(parent)) {
+      for (const child of children) {
+        keyGroups.delete(child);
+      }
+    }
+  }
+
+  const allKeys: { nk: string; label: string; isCore: boolean }[] = [
+    ...coreKeys.map((k) => ({ nk: k, label: getLabelForCoreKey(k), isCore: true })),
+    ...[...keyGroups.entries()].map(([nk, g]) => ({ nk, label: g.label, isCore: false })),
   ];
 
-  const allKeys = [...coreKeys, ...attrKeys.filter((k) => !coreKeys.includes(k))];
-
   return allKeys
-    .map((key): ComparedRow | null => {
-      const cells: ComparedCell[] = products.map((p) => {
+    .map(({ nk, label, isCore }): ComparedRow | null => {
+      const cells: ComparedCell[] = cleanProducts.map((p) => {
         let value: string | number | boolean | null = null;
 
-        // Core fields from Product directly
-        if (key === 'price') value = p.price;
-        else if (key === 'rating') value = p.rating;
-        else if (key === 'reviewCount') value = p.reviewCount;
-        else if (key === 'isPrime') value = p.isPrime;
-        else if (key === 'availability') value = p.availability;
-        else if (key === 'brand') value = p.brand;
-        else {
-          const attr = p.attributes.find((a) => a.key === key);
+        if (isCore) {
+          if (nk === 'price') value = p.price;
+          else if (nk === 'rating') value = p.rating;
+          else if (nk === 'reviewCount') value = p.reviewCount;
+          else if (nk === 'isPrime') value = p.isPrime;
+          else if (nk === 'availability') value = p.availability;
+          else if (nk === 'brand') value = p.brand;
+        } else {
+          // Find attribute by normalized key match
+          const attr = p.attributes.find((a) => normalizeKey(a.key) === nk);
           value = attr?.value ?? null;
         }
 
@@ -67,21 +109,18 @@ export function computeDiff(products: Product[]): ComparedRow[] {
 
       const hasDifference = new Set(cells.map((c) => String(c.value))).size > 1;
 
-      // For same-value rows, mark all as 'same'
       if (!hasDifference) {
         cells.forEach((c) => (c.diff = 'same'));
       } else {
-        assignNumericDiff(cells, key);
+        assignNumericDiff(cells, nk);
       }
 
-      const label = getLabelForKey(key, products);
-
-      return { key, label, cells, hasDifference };
+      return { key: nk, label, cells, hasDifference };
     })
     .filter((row): row is ComparedRow => row !== null);
 }
 
-function getLabelForKey(key: string, products: Product[]): string {
+function getLabelForCoreKey(key: string): string {
   const labels: Record<string, string> = {
     price: 'Price',
     rating: 'Rating',
@@ -90,14 +129,5 @@ function getLabelForKey(key: string, products: Product[]): string {
     availability: 'Availability',
     brand: 'Brand',
   };
-  if (labels[key]) return labels[key];
-
-  // Check LLM-extracted attribute labels
-  for (const p of products) {
-    const attr = p.attributes.find((a) => a.key === key);
-    if (attr?.label) return attr.label;
-  }
-
-  // Fallback: humanize snake_case
-  return key.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+  return labels[key] ?? key;
 }

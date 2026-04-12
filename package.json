@@ -18,8 +18,10 @@
   "dependencies": {
     "html2canvas": "^1.4.1",
     "nanoid": "^5.1.7",
+    "pako": "^2.1.0",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
+    "react-is": "^19.2.4",
     "recharts": "^3.8.1",
     "zustand": "^5.0.12"
   },
@@ -32,6 +34,7 @@
     "@testing-library/react": "^16.3.2",
     "@types/chrome": "^0.1.39",
     "@types/node": "^24.12.2",
+    "@types/pako": "^2.0.4",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
     "@typescript-eslint/eslint-plugin": "^8.58.0",
